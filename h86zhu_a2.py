@@ -110,8 +110,6 @@ def OneHot(z):
 
 # ## Layer Class
 
-# In[4]:
-
 
 class Layer():
     
@@ -343,7 +341,140 @@ class Network():
             self.FeedForward(shuffled_input);
             self.BackProp(shuffled_target);
         
+ class RobustNetwork(Network.Network):
+    
+    def FeedForward(self, x, dropout=0):
+        '''
+            y = net.FeedForward(x, dropout=0)
 
+            Runs the network forward, starting with x as input.
+            However, a random subset of the hidden nodes are set to 0 activity.
+            Returns the activity of the output layer.
+
+            Inputs:
+              x is a batch of inputs
+              dropout is a probability that a node is dropped, in [0,1]
+              
+            Outputs:
+              y is the batch of outputs (no dropout or the output layer)
+        '''
+        if dropout==0.:
+            self.dropout_nonzero = False  # Internal flag for dropout
+            super(RobustNetwork, self).FeedForward(x)
+        else:
+            self.dropout_nonzero = True   # Internal flag for dropout
+            
+            x = np.array(x)  # Convert input to array, in case it's not
+            
+            self.lyr[0].h = x # Set input layer
+            
+            self.mask = []  # mask will record which nodes were dropped
+            self.mask.append(None)  # Input layer does not have dropout
+
+            # Loop over connections
+            for pre,post,W in zip(self.lyr[:-1], self.lyr[1:], self.W):
+                if pre != self.lyr[0]: #We do not dropout input layer
+                    self.mask = np.random.binomial(1,1-dropout,size=pre.h.shape) / (1 - dropout);
+                    
+                    #(1 - dropout) is the probability for a one to persist 
+                    #pre.h = pre.h * self.mask;
+                    # Calc. input current to next layer
+                    #post.z = pre.h @ W + post.b
+                    
+                    post.z = (1/(1-dropout)) * (pre.h*self.mask) @ (W) + post.b
+
+                    # Use activation function to get activities
+                    post.h = post.sigma(post.z)
+
+                    # Use activation function to get activities
+                    post.h = post.sigma(post.z)
+                else:
+                    post.z = pre.h @ W + post.b
+
+                    # Use activation function to get activities
+                    post.h = post.sigma(post.z)
+                
+        # Return activity of output layer
+        return self.lyr[-1].h
+    
+    
+    
+    def BackProp(self, t, lrate=0.05, decay=0.):
+        '''
+            net.BackProp(targets, lrate=0.05)
+            
+            Given the current network state and targets t, updates the connection
+            weights and biases using the backpropagation algorithm.
+            
+            Inputs:
+             t      an array of targets (number of samples must match the
+                    network's output)
+             lrate  learning rate
+             decay  is the coefficient for weight/bias decay
+        '''
+        t = np.array(t)  # convert t to an array, in case it's not
+        
+        # Error gradient for top layer
+        dEdz = self.TopGradient(t)
+        
+        # Loop down through the layers
+        for i in range(self.n_layers-2, -1, -1):
+            pre = self.lyr[i]
+            
+            # Gradient w.r.t. weights
+            #sum_weight = sum(self.W[i])
+            dEdW = pre.h.T @ dEdz + 2 * decay * self.W[i]
+            
+            # Gradient w.r.t. biases
+            dEdb = np.sum(dEdz , axis=0) + sum(2 * decay * self.lyr[i].b)
+            
+            # If not the bottom layer,
+            # Project error gradient down to layer below
+            if i>0:
+                dEdz = ( dEdz @ self.W[i].T ) * pre.sigma_z_p(pre.z)
+            
+            # Update weights and biases
+            self.W[i] -= lrate*dEdW
+            self.lyr[i+1].b -= lrate*dEdb
+
+                
+    
+    
+    def SGD(self, inputs, targets, lrate=0.05, epochs=1, batch_size=10, decay=0, dropout=0):
+        '''
+            progress = net.SGD(inputs, targets, lrate=0.05, epochs=1, decay=0, dropout=0)
+
+            Performs Stochastic Gradient Descent on the network.
+            Run through the dataset in batches 'epochs' number of times, incrementing the
+            network weights after each batch. For each epoch, it
+            shuffles the dataset.
+
+            Inputs:
+              inputs  is an array of input samples
+              targets is a corresponding array of targets
+              lrate   is the learning rate (try 0.001 to 5)
+              epochs  is the number of times to go through the training data
+              decay   is the decay coefficient for the weights and biases
+              dropout is the dropout probability
+              
+            Outputs:
+              progress is an (expochs)x2 array with epoch in the first column, and 
+                      cost in the second column
+        '''
+        loss_history = []
+        for k in range(epochs):
+            batches = Network.MakeBatches(inputs, targets, batch_size=batch_size, shuffle=True)
+            for mini_batch in batches:
+                self.FeedForward(mini_batch[0], dropout=dropout)
+                self.BackProp(mini_batch[1], decay=decay)
+
+            loss_history.append([k, self.Evaluate(inputs, targets)])
+
+        return np.array(loss_history)        
+        
+        
+        
+       
 
 # # Classification
 
